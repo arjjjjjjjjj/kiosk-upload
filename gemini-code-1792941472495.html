@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kiosk File Upload</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Arial, sans-serif; }
+    body { background: #f4f6f9; padding: 20px; margin: 0; text-align: center; }
+    .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 400px; margin: 40px auto; }
+    h2 { color: #1a73e8; margin-top: 0; }
+    p { color: #5f6368; font-size: 14px; }
+    .file-input-container { margin: 20px 0; }
+    input[type="file"] { display: none; }
+    .custom-file-upload {
+      display: inline-block;
+      padding: 12px 20px;
+      background: #e8f0fe;
+      color: #1a73e8;
+      border: 2px dashed #1a73e8;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      width: 100%;
+    }
+    .btn-submit {
+      background: #1a73e8;
+      color: white;
+      border: none;
+      padding: 14px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      width: 100%;
+      cursor: pointer;
+      margin-top: 15px;
+    }
+    .btn-submit:disabled { background: #ccc; cursor: not-allowed; }
+    #status { margin-top: 15px; font-weight: bold; color: #1e8e3e; word-break: break-all; }
+    .selected-file { margin-top: 10px; font-size: 13px; color: #333; font-weight: bold; }
+  </style>
+
+  <!-- Firebase Web SDK v8 -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
+</head>
+<body>
+
+  <div class="card">
+    <h2>Kiosk Document Upload</h2>
+    <p>Select your PDF file to send directly to the printing kiosk.</p>
+
+    <div class="file-input-container">
+      <label for="pdf-file" class="custom-file-upload">📁 Choose PDF File</label>
+      <input type="file" id="pdf-file" accept="application/pdf" onchange="handleFileSelect(event)">
+      <div id="file-name" class="selected-file"></div>
+    </div>
+
+    <button id="upload-btn" class="btn-submit" onclick="uploadPDF()" disabled>Submit for Printing</button>
+
+    <div id="status"></div>
+  </div>
+
+  <script>
+    // --- YOUR FIREBASE CONFIGURATION ---
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const storage = firebase.storage();
+    const database = firebase.database();
+
+    // Extract session ID from the URL parameters (e.g. upload.html?session=session_12345)
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionID = urlParams.get('session');
+
+    let selectedFile = null;
+
+    function handleFileSelect(event) {
+      selectedFile = event.target.files[0];
+      if (selectedFile) {
+        if (selectedFile.type !== "application/pdf") {
+          document.getElementById('status').innerText = "Please select a valid PDF file.";
+          document.getElementById('status').style.color = "#d93025";
+          document.getElementById('upload-btn').disabled = true;
+          return;
+        }
+        document.getElementById('file-name').innerText = "Selected: " + selectedFile.name;
+        document.getElementById('status').innerText = "";
+        document.getElementById('upload-btn').disabled = false;
+      }
+    }
+
+    function uploadPDF() {
+      if (!selectedFile || !sessionID) {
+        document.getElementById('status').innerText = "Invalid session or missing file.";
+        return;
+      }
+
+      const uploadBtn = document.getElementById('upload-btn');
+      const statusDiv = document.getElementById('status');
+      uploadBtn.disabled = true;
+      statusDiv.style.color = "#1a73e8";
+      statusDiv.innerText = "Uploading document...";
+
+      // Upload file to Firebase Storage under uploads/sessionID/filename.pdf
+      const storageRef = storage.ref('uploads/' + sessionID + '/' + selectedFile.name);
+      const uploadTask = storageRef.put(selectedFile);
+
+      uploadTask.on('state_changed', 
+        (snapshot) => {
+          // Progress monitoring
+          const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+          statusDiv.innerText = "Uploading: " + progress + "%";
+        }, 
+        (error) => {
+          statusDiv.style.color = "#d93025";
+          statusDiv.innerText = "Upload failed: " + error.message;
+          uploadBtn.disabled = false;
+        }, 
+        () => {
+          // Get Download URL after successful upload
+          uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
+            // Signal the Raspberry Pi via Realtime Database
+            database.ref('kiosk/print_jobs/' + sessionID).set({
+              fileUrl: downloadURL,
+              fileName: selectedFile.name,
+              timestamp: Date.now(),
+              status: "pending"
+            }).then(() => {
+              statusDiv.style.color = "#1e8e3e";
+              statusDiv.innerText = "✓ Sent to kiosk successfully! You can close this page.";
+            });
+          });
+        }
+      );
+    }
+  </script>
+</body>
+</html>
